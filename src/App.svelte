@@ -9,7 +9,7 @@
 	import Profile from './Profile.svelte';
 	import Select from './Select.svelte';
 	import Loader from './Loader.svelte';
-	import { getData, getPlaces, getBoundary, getPoints, makeLookup, inPolygon, compressCodes, addBoundary, download, sleep, setUnion, setDiff } from './utils.js';
+	import { getData, getPlaces, getBoundary, getPoints, makeLookup, inPolygon, compressCodes, urlCodes, addBoundary, download, sleep, setUnion, setDiff } from './utils.js';
 	
 	// Settings
 	const mapstyle = 'https://bothness.github.io/ons-basemaps/data/style-omt.json';
@@ -202,9 +202,11 @@
 
 		newcodes['2011'] = compressCodes(codes['2011'], lookup.c11.lsoa);
 		newcodes['2011'] = compressCodes(newcodes['2011'], lookup.c11.msoa);
+		newcodes['2011'] = urlCodes(newcodes['2011']);
 
 		newcodes['2001'] = compressCodes(codes['2001'], lookup.c01.lsoa);
 		newcodes['2001'] = compressCodes(newcodes['2001'], lookup.c01.msoa);
+		newcodes['2001'] = urlCodes(newcodes['2001']);
 
 		let indexed = {
 			'2001': {},

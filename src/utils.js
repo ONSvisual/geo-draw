@@ -208,6 +208,29 @@ export function compressCodes(codes, lookup) {
 	return newcodes;
 }
 
+export function urlCodes(codes) {
+	let srtcodes = [...codes].sort((a, b) => a.localeCompare(b));
+	let nums = srtcodes.map(code => +code.slice(-8));
+
+	let newcodes = [];
+	let firstnum = 0;
+	let lastnum = 0;
+
+	for (let i = 1; i < nums.length ; i ++) {
+		if (nums[i] == nums[lastnum] + 1) {
+			lastnum = i;
+		} else {
+			newcodes.push(firstnum != lastnum ? srtcodes[firstnum] + '...' + srtcodes[lastnum] : srtcodes[lastnum]);
+			firstnum = lastnum = i;
+		}
+		if (i == nums.length - 1) {
+			newcodes.push(firstnum != lastnum ? srtcodes[firstnum] + '...' + srtcodes[lastnum] : srtcodes[lastnum]);
+		}
+	}
+	console.log(newcodes);
+	return newcodes;
+}
+
 export function download(blob, filename) {
 	let url = window.URL || window.webkitURL || window;
 	let link = url.createObjectURL(blob);

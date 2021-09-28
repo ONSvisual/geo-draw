@@ -6,9 +6,6 @@
   export let draw = null;
   export let drawing = false;
   export let polygons = 0;
-  export let centroids;
-  export let selected;
-  export let loaded;
 
   const { getMap } = getContext("map");
   const map = getMap();

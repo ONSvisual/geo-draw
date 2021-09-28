@@ -44,6 +44,8 @@
 				...options
 			});
 			
+			map.addControl(new mapbox.NavigationControl());
+			
 			// Get initial zoom level
 			map.on('load', () => {
 				zoom = map.getZoom();

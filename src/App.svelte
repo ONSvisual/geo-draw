@@ -1,17 +1,17 @@
 <script>
 	import { union, buffer, bbox, simplify, within } from '@turf/turf';
 	import { csvParse, autoType } from 'd3-dsv';
-	import Map from './Map.svelte';
-	import MapSource from './MapSource.svelte';
-	import MapLayer from './MapLayer.svelte';
-	import MapDraw from './MapDraw.svelte';
-	import Panel from './Panel.svelte';
-	import Profile from './Profile.svelte';
-	import Select from './Select.svelte';
-	import Loader from './Loader.svelte';
+	import Map from './map/Map.svelte';
+	import MapSource from './map/MapSource.svelte';
+	import MapLayer from './map/MapLayer.svelte';
+	import MapDraw from './map/MapDraw.svelte';
+	import Panel from './layout/Panel.svelte';
+	import Profile from './layout/Profile.svelte';
+	import Select from './ui/Select.svelte';
+	import Loader from './ui/Loader.svelte';
 	import { getData, getPlaces, getBoundary, getPoints, makeLookup, inPolygon, compressCodes, urlCodes, addBoundary, download, sleep, setUnion, setDiff } from './utils.js';
 	
-	// Settings
+	// CONFIG
 	const mapstyle = 'https://bothness.github.io/ons-basemaps/data/style-omt.json';
 	const oalatlngurl = './data/oalatlng.csv';
 	const lookupurl = './data/lookup.json';
@@ -20,7 +20,6 @@
 		layer: 'OA_bound_ethnicity',
 		id: 'oa11cd'
 	}
-
 	const apiurl = 'https://www.nomisweb.co.uk/api/v01/dataset/';
 	const apitables = [
 		{
@@ -105,7 +104,7 @@
 		}
 	];
 	
-	// Elements
+	// DOM ELEMENTS
 	let map = null;
 	let draw = null;
 	let uploadElem = {
@@ -113,13 +112,13 @@
 		boundary: null
 	};
 	
-	// Data
+	// DATA VARIABLES
 	let centroids;
 	let lookup;
 	let poplookup;
 	let places;
 	
-	// State
+	// APP STATE
 	let selectedPlace = null;
 	let selected = new Set();
 	let codes = {
@@ -141,8 +140,11 @@
 	let footerHeight = 0;
 	let year = "2011";
 	
-	function doSelect(e) {
-		let code = e.detail.value;
+	// FUNCTIONS
+
+	// Get boundary for named area + select centroids inside it
+	function doSelect(ev) {
+		let code = ev.detail.value;
 		if (code == null) {
 			let id = 'boundary';
 			if (map.getLayer(id)) {
@@ -171,6 +173,7 @@
 		}
 	}
 	
+	// Unselect all centroids + reset population counts
 	function clearData() {
 		selected = new Set();
 		codes['2001'] = [];
@@ -180,6 +183,7 @@
 		year = '2011';
 	}
 
+	// Functions for buttons to interact with MapDraw component
 	function drawEdit() {
 		if (!drawing) {
 			draw.changeMode('draw_polygon');
@@ -195,25 +199,29 @@
 		draw.changeMode('simple_select');
 	}
 
+	// Download + process data from Nomis
 	async function makeProfile() {
 		loaded = false;
 
 		let newcodes = {};
 
+		// Reduce OA codes to combination of complete MSOAs, LSOAs and OAs
 		newcodes['2011'] = compressCodes(codes['2011'], lookup.c11.lsoa);
 		newcodes['2011'] = compressCodes(newcodes['2011'], lookup.c11.msoa);
-		newcodes['2011'] = urlCodes(newcodes['2011']);
 
 		newcodes['2001'] = compressCodes(codes['2001'], lookup.c01.lsoa);
 		newcodes['2001'] = compressCodes(newcodes['2001'], lookup.c01.msoa);
+
+		// Compress code list for Nomis API query
+		newcodes['2011'] = urlCodes(newcodes['2011']);
 		newcodes['2001'] = urlCodes(newcodes['2001']);
 
+		// Get data for OA, LSOA, MSOA codes
 		let indexed = {
 			'2001': {},
 			'2011': {}
 		};
 
-		// Get data for OA, LSOA, MSOA codes
 		for (let table of apitables) {
 			let cells = Object.keys(table.cells);
 			let data = await getData(apiurl + table.query + cells.join(',') + '&geography=' + newcodes[table.year].join(','));
@@ -227,11 +235,11 @@
 			});
 		}
 
+		// Aggregate data and do calcs
 		let dataset = {
 			area: 0
 		};
 
-		// Aggregate data and do calcs
 		['2011', '2001'].forEach(year => {
 			let arr = [];
 			let codes = Object.keys(indexed[year]);
@@ -264,6 +272,7 @@
 		loaded = true;
 	}
 
+	// Export lookup as CSV
 	function dwnLookup() {
 		// Convert selected OA codes to string
 		let string = `oa${year.slice(-2)}cd,lat,lng\n`;
@@ -279,6 +288,7 @@
 		download(blob, `${name}.csv`);
 	}
 
+	// Generate and export boundary as GeoJSON
 	async function dwnBoundary() {
 		loaded = false;
 
@@ -349,18 +359,19 @@
 		map.removeSource(id);
 	}
 	
+	// Functions to open upload dialogues
 	function clickBoundary() {
 		if (uploadElem.boundary) {
 			uploadElem.boundary.click();
 		}
 	}
-
 	function clickLookup() {
 		if (uploadElem.lookup) {
 			uploadElem.lookup.click();
 		}
 	}
 	
+	// Process uploaded boundary + select centroids inside it
   function gotBoundary() {
 		let file = uploadElem.boundary.files[0] ? uploadElem.boundary.files[0] : null;
 		
@@ -393,6 +404,7 @@
 		}
 	}
 
+	// Process uploaded CSV + select the listed centroids
   function gotLookup() {
 		let file = uploadElem.lookup.files[0] ? uploadElem.lookup.files[0] : null;
 		
@@ -435,6 +447,7 @@
 		}
 	}
 
+	// Remove selected named area boundary
 	function clearBounds() {
 		boundary = null;
 
@@ -445,6 +458,8 @@
 		}
 	}
 
+	// Update selected areas on map click
+	// !! This is complex as it needs to also select/deselect 2001 centroids based on the clicked polygon
 	async function clickSelect(ev) {
 		let code = ev.detail.code;
 		let newcode = ev.detail.newcode;
@@ -470,6 +485,7 @@
 		}
 	}
 
+	// Select centroids within a drawn boundary
 	async function drawSelect(ev) {
 		let bounds = ev.detail.polygons;
 		let clear = ev.detail.clear;
@@ -484,6 +500,7 @@
     }
 	}
 
+	// Update 2001 + 2011 codes and populations (called when selected centroids change)
 	function updateCodes() {
 		let arr = Array.from(selected);
 		let c01 = arr.filter(d => d.c01 == true);
@@ -495,6 +512,8 @@
 	}
 	
   // RUN THE CODE
+
+	// Get list of codes and names for standard geographies
 	getPlaces()
 	.then(data => {
 		places = data;
@@ -503,6 +522,7 @@
 		}
 	});
 	
+	// Load centroid codes, coordinates + populations from CSV
 	getPoints(oalatlngurl)
 	.then(data => {
 		centroids = data.geometry;
@@ -512,6 +532,7 @@
 		}
 	});
 
+	// Load lookups from OA to LSOA to MSOA from JSON
 	makeLookup(lookupurl)
 	.then(data => {
 		lookup = data;

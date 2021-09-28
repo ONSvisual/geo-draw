@@ -1,9 +1,11 @@
 import { csvParse, autoType } from 'd3-dsv';
 import { bbox, simplify, pointsWithinPolygon } from '@turf/turf';
-import { parse } from './wellknown.js';
+import wellknown from 'wellknown';
 
+// API URL for ONS linked geographic data service
 const apiurl = 'https://pmd3-production-drafter-onsgeo.publishmydata.com/v1/sparql/live?query=';
 
+// Get names and codes of various standard geographies
 export async function getPlaces() {
 	let query = `PREFIX entity: <http://statistics.data.gov.uk/id/statistical-entity/>
 PREFIX entdef: <http://statistics.data.gov.uk/def/statistical-entity#>
@@ -27,6 +29,8 @@ LIMIT 10000`;
 	return data;
 }
 
+// Get names and codes for standard geographies that coincide with a postcode
+// !! This function is not currently used
 export async function getPostcode(code) {
 	code = code.replace(/ /g, '').toUpperCase();
 	let query = `PREFIX entity: <http://statistics.data.gov.uk/id/statistical-entity/>
@@ -51,6 +55,7 @@ LIMIT 10`;
 	return data;
 }
 
+// Get WKT boundary from linked data service and convert to GeoJSON
 export async function getBoundary(code) {
 	let query = `PREFIX geosparql: <http://www.opengis.net/ont/geosparql#>
 SELECT ?geometry
@@ -61,7 +66,7 @@ LIMIT 1`;
 	let data = await getData(apiurl + encodeURIComponent(query));
 
 	// Convert polygon from WKT to geojson format
-	let geojson = await parse(data[0].geometry);
+	let geojson = await wellknown.parse(data[0].geometry);
 	console.log('polygon loaded')
 
 	// Simplify the polygon if it's a large BUA or BUASD
@@ -82,6 +87,7 @@ LIMIT 1`;
 	};
 }
 
+// Load centroids + metadata from CSV file and convert to GeoJSON + lookup
 export async function getPoints(url) {
 	let geojson = {
 		'type': 'FeatureCollection',
@@ -122,6 +128,7 @@ export async function getPoints(url) {
 	};
 }
 
+// Get a CSV and convert it to a JSON array
 export async function getData(url) {
 	let response = await fetch(url);
 	let string = await response.text();
@@ -129,6 +136,7 @@ export async function getData(url) {
 	return data;
 }
 
+// Process OA > LSOA > MSOA lookup JSON file into a forward and reverse lookup
 export async function makeLookup(url) {
 	let response = await fetch(url);
 	let data = await response.json();
@@ -159,37 +167,40 @@ export async function makeLookup(url) {
 	return lookup;
 }
 
+// Async function to allow pointsWithinPolygon function to be chaiend with .then syntax
 export async function inPolygon(centroids, boundary) {
 	let points = await pointsWithinPolygon(centroids, boundary);
 	return points;
 }
 
+// Add a GeoJSON boundary to map
 export async function addBoundary(map, boundary) {
 	let id = 'boundary';
+	let layer = map.getLayer(id)
 
-	// Remove previous boundary from the map
-	if (map.getLayer(id)) {
-		map.removeLayer(id);
-		map.removeSource(id);
+	if (!layer) {
+		// Add source and layer to map if it doesn't exist
+		map.addSource(id, {
+			'type': 'geojson',
+			'data': boundary
+		});
+		map.addLayer({
+			'id': id,
+			'type': 'line',
+			'source': id,
+			'layout': {},
+			'paint': {
+				'line-color': '#3bb2d0',
+				'line-width': 2
+			}
+		}, 'boundary_country');
+	} else {
+		// Update boundary
+		layer.setData(boundary);
 	}
-
-	// Add new boundary to the map
-	map.addSource(id, {
-		'type': 'geojson',
-		'data': boundary
-	});
-	map.addLayer({
-		'id': id,
-		'type': 'line',
-		'source': id,
-		'layout': {},
-		'paint': {
-			'line-color': '#3bb2d0',
-			'line-width': 2
-		}
-	}, 'boundary_country');
 }
 
+// Reduce list of OA codes > LSOA > MSOA using lookup
 export function compressCodes(codes, lookup) {
 	let newcodes = [...codes];
 	let parents = [];
@@ -208,6 +219,7 @@ export function compressCodes(codes, lookup) {
 	return newcodes;
 }
 
+// Compress API geography string for Nomis by combining consecutive codes with elipsis (...)
 export function urlCodes(codes) {
 	let srtcodes = [...codes].sort((a, b) => a.localeCompare(b));
 	let nums = srtcodes.map(code => +code.slice(-8));
@@ -227,10 +239,11 @@ export function urlCodes(codes) {
 			newcodes.push(firstnum != lastnum ? srtcodes[firstnum] + '...' + srtcodes[lastnum] : srtcodes[lastnum]);
 		}
 	}
-	console.log(newcodes);
+	
 	return newcodes;
 }
 
+// Write blob string to file
 export function download(blob, filename) {
 	let url = window.URL || window.webkitURL || window;
 	let link = url.createObjectURL(blob);
@@ -243,10 +256,12 @@ export function download(blob, filename) {
 	document.body.removeChild(a);
 }
 
+// Sleep function (takes value in milliseconds)
 export function sleep(ms) {
 	return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Join (union) two sets
 export function setUnion(setA, setB) {
 	let union = new Set(setA);
 	for (let elem of setB) {
@@ -255,6 +270,7 @@ export function setUnion(setA, setB) {
 	return union;
 }
 
+// Subtract (difference) one set from another
 export function setDiff(setA, setB) {
 	let difference = new Set(setA);
 	for (let elem of setB) {

@@ -1,6 +1,7 @@
 <script>
-  import { onMount, getContext } from "svelte";
-  import { within } from "@turf/turf";
+  import { onMount, getContext, createEventDispatcher } from "svelte";
+
+  const dispatch = createEventDispatcher();
 
   export let draw = null;
   export let drawing = false;
@@ -31,16 +32,15 @@
       let data = draw.getAll();
       polygons = data.features.length;
       if (polygons > 0) {
-        loaded = false;
-
-        // Select OAs within boundary
-        if (centroids) {
-          let points = await within(centroids, data);
-          let codes = await points.features.map((d) => d.properties.id);
-          codes = codes.filter(code => !selected.includes(code))
-          selected = [...selected, ...codes];
-        }
-        loaded = true;
+        dispatch('draw', {
+					polygons: data,
+          clear: false
+				});
+      } else {
+        dispatch('draw', {
+					polygons: null,
+          clear: true
+				});
       }
       await sleep(10);
       drawing = false;

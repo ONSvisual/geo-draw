@@ -1,7 +1,9 @@
 <script>
 	import mapbox from 'mapbox-gl';
 	import { bbox } from '@turf/turf';
-	import { getContext } from 'svelte';
+	import { getContext, createEventDispatcher } from 'svelte';
+
+	const dispatch = createEventDispatcher();
 	
 	export let id;
 	export let source;
@@ -9,6 +11,7 @@
 	export let type;
 	export let layout = {};
 	export let paint = {};
+	export let filter = null;
 	export let selected = [];
 	export let hovered = null;
 	export let click = false;
@@ -18,13 +21,10 @@
 	export let maxzoom;
 	export let minzoom;
 	
-	export let lookup = null;
-	export let population = 0;
-	
 	const { getMap } = getContext('map');
 	const map = getMap();
 	
-	let selectedPrev = [];
+	let selectedPrev = [...selected];
 	
 	if (map.getLayer(id)) {
     map.removeLayer(id);
@@ -37,6 +37,10 @@
 		'paint': paint,
 		'layout': layout
 	};
+
+	if (filter) {
+		options['filter'] = filter;
+	}
 	
 	if (sourceLayer) {
 		options['source-layer'] = sourceLayer;
@@ -50,8 +54,7 @@
 	
 	map.addLayer(options, order);
 	
-	$: if (lookup && selected !== selectedPrev) {
-		let pop = 0;
+	$: if (selected.length !== selectedPrev.length) {
 		selectedPrev.forEach(d => {
 			map.setFeatureState(
 				{ source: source, sourceLayer: sourceLayer, id: d },
@@ -63,35 +66,43 @@
 				{ source: source, sourceLayer: sourceLayer, id: d },
 				{ selected: true }
 			);
-			pop += +lookup[d].pop;
 		});
 		selectedPrev = selected;
-		population = pop;
 	}
 	
-	if (lookup && click && Array.isArray(selected)) {
+	if (click && Array.isArray(selected)) {
 		map.on('click', id, (e) => {
       if (!drawing && e.features.length > 0) {
 				let clicked = e.features[0].id;
 				let index = selected.indexOf(clicked);
+
+				let visibleFeatures = map.queryRenderedFeatures({layers: [id]});
+				let geometry = visibleFeatures.filter(d => d.id == clicked);
+				geometry = {type: "FeatureCollection", features: geometry.map(d => ({
+					type: "Feature",
+					geometry: d.geometry,
+					properties: d.properties
+				}))};
 				
 				if (index > -1) {
-					selected.splice(index, 1);
-					map.setFeatureState(
-            { source: source, sourceLayer: sourceLayer, id: clicked },
-            { selected: false }
-          );
-					population -= +lookup[clicked].pop;
+					dispatch('click', {
+					  code: clicked,
+						newcode: false,
+						geometry: geometry
+				  });
+					// selected.splice(index, 1);
+					// map.setFeatureState(
+          //   { source: source, sourceLayer: sourceLayer, id: clicked },
+          //   { selected: false }
+          // );
 				} else {
-					selected.push(clicked);
-					map.setFeatureState(
-            { source: source, sourceLayer: sourceLayer, id: clicked },
-            { selected: true }
-          );
-					population += +lookup[clicked].pop;
+					dispatch('click', {
+					  code: clicked,
+						newcode: true,
+						geometry: geometry
+				  });
 				}
       }
-			selectedPrev = selected = [...selected];
     });
 	}
 	

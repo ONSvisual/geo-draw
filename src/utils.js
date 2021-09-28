@@ -89,9 +89,18 @@ export async function getPoints(url) {
 	};
 
 	let points = await getData(url);
-	let poplookup = {};
+	let lookup = {};
 
 	points.forEach(loc => {
+		let properties = {
+			'id': loc.code,
+			'lat': loc.lat,
+			'lng': loc.lng,
+			'pop01': loc.pop01,
+			'pop11': loc.pop11,
+			'c01': loc.pop01 ? true : false,
+			'c11': loc.pop11 ? true : false
+		};
 		let feature = {
 			'type': 'Feature',
 			'geometry': {
@@ -101,26 +110,15 @@ export async function getPoints(url) {
 					loc.lat
 				]
 			},
-			'properties': {
-				'id': loc.code,
-				'parent': loc.parent,
-				'pop': loc.pop
-			}
+			properties
 		};
 		geojson.features.push(feature);
-		poplookup[loc.code] = {
-			'pop': loc.pop,
-			'lat': loc.lat,
-			'lng': loc.lng
-		};
+		lookup[loc.code] = properties;
 	});
-
-	let lookup = makeLookup(points);
 
 	return {
 		geometry: geojson,
-		lookup: lookup,
-		poplookup: poplookup
+		lookup: lookup
 	};
 }
 
@@ -131,23 +129,34 @@ export async function getData(url) {
 	return data;
 }
 
-export function makeLookup(data) {
-	let forward = {};
-	let reverse = {};
+export async function makeLookup(url) {
+	let response = await fetch(url);
+	let data = await response.json();
 
-	data.forEach(d => {
-		forward[d.code] = d.parent
-		if (!reverse[d.parent]) {
-			reverse[d.parent] = [d.code];
-		} else {
-			reverse[d.parent].push(d.code);
-		}
+	let lookup = {};
+
+	const years = ["c01", 'c11'];
+	const codes = ["lsoa", "msoa"];
+
+	years.forEach(year => {
+		lookup[year] = {};
+
+		codes.forEach(code => {
+			lookup[year][code] = {};
+
+			let keys = Object.keys(data[year][code]);
+			keys.forEach(key => {
+				lookup[year][code].reverse = data[year][code][key];
+				lookup[year][code].forward = {};
+				
+				data[year][code][key].forEach(val => {
+					lookup[year][code].forward[val] = key;
+				});
+			});
+		});
 	});
 
-	return {
-		forward: forward,
-		reverse: reverse
-	}
+	return lookup;
 }
 
 export async function inPolygon(centroids, boundary) {
@@ -213,4 +222,20 @@ export function download(blob, filename) {
 
 export function sleep(ms) {
 	return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+export function setUnion(setA, setB) {
+	let union = new Set(setA);
+	for (let elem of setB) {
+			union.add(elem);
+	}
+	return union;
+}
+
+export function setDiff(setA, setB) {
+	let difference = new Set(setA);
+	for (let elem of setB) {
+			difference.delete(elem);
+	}
+	return difference;
 }

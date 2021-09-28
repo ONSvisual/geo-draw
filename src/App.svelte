@@ -1,19 +1,20 @@
 <script>
-	import { union, buffer, bbox, simplify } from '@turf/turf';
+	import { union, buffer, bbox, simplify, within } from '@turf/turf';
 	import { csvParse, autoType } from 'd3-dsv';
 	import Map from './Map.svelte';
 	import MapSource from './MapSource.svelte';
 	import MapLayer from './MapLayer.svelte';
 	import MapDraw from './MapDraw.svelte';
 	import Panel from './Panel.svelte';
+	import Profile from './Profile.svelte';
 	import Select from './Select.svelte';
 	import Loader from './Loader.svelte';
-	import { getData, getPlaces, getBoundary, getPoints, makeLookup, inPolygon, compressCodes, addBoundary, download, sleep } from './utils.js';
+	import { getData, getPlaces, getBoundary, getPoints, makeLookup, inPolygon, compressCodes, addBoundary, download, sleep, setUnion, setDiff } from './utils.js';
 	
 	// Settings
 	const mapstyle = 'https://bothness.github.io/ons-basemaps/data/style-omt.json';
-	const oalatlng = './data/oalatlng.csv';
-	const lsoalookup = './data/lsoalookup.csv';
+	const oalatlngurl = './data/oalatlng.csv';
+	const lookupurl = './data/lookup.json';
 	const vector = {
 		url: 'https://cdn.ons.gov.uk/maptiles/t9/{z}/{x}/{y}.pbf',
 		layer: 'OA_bound_ethnicity',
@@ -25,13 +26,82 @@
 		{
 			query: 'NM_144_1.data.csv?date=latest&rural_urban=0&measures=20100&select=geography_code,cell,obs_value&rows=geography_code&cols=cell&cell=',
 			cells: {
-				'0': 'All usual residents',
-				'1': 'Males',
-				'2': 'Females',
-				'3': 'Lives in a household',
-				'4': 'Lives in a communal establishment',
-				'6': 'Area (Hectares)'
-			}
+				'1': 'male',
+				'2': 'female',
+				'6': 'area'
+			},
+			year: '2011'
+		},
+		{
+			query: 'NM_145_1.data.csv?date=latest&rural_urban=0&cell=17&measures=20100&select=geography_code,cell,obs_value&rows=geography_code&cols=cell&cell=',
+			cells: {
+				'0': 'pop',
+				'17': 'age'
+			},
+			year: '2011'
+		},
+		{
+			query: 'NM_1634_1.data.csv?date=latest&measures=20100&select=geography_code,cell,obs_value&rows=geography_code&cols=cell&cell=',
+			cells: {
+				'1': 'male',
+				'2': 'female'
+			},
+			year: '2001'
+		},
+		{
+			query: 'NM_1602_1.data.csv?date=latest&measures=20100&select=geography_code,cell,obs_value&rows=geography_code&cols=cell&cell=',
+			cells: {
+				'0': 'pop',
+				'17': 'age'
+			},
+			year: '2001'
+		}
+	];
+	const formats = {
+		dp0: d => d.toLocaleString(),
+		dp1: d => d.toFixed(1),
+		dp1plus: d => d > 0 ? '+' + d.toFixed(1) : d.toFixed(1)
+	}
+	const profilerows = [
+		{
+			label: 'Total population',
+			value: 'abs',
+			cell: 'pop',
+			change: 'perc',
+			suffixes: ['', '%'],
+			formats: [formats.dp0, formats.dp1plus]
+		},
+		{
+			label: 'Density (people per hectare)',
+			value: 'abs',
+			cell: 'density',
+			change: 'perc',
+			suffixes: ['', '%'],
+			formats: [formats.dp1, formats.dp1plus]
+		},
+		{
+			label: 'Average (mean) age',
+			value: 'abs',
+			cell: 'age',
+			change: 'abs',
+			suffixes: ['', 'yrs'],
+			formats: [formats.dp1, formats.dp1plus]
+		},
+		{
+			label: 'Female',
+			value: 'perc',
+			cell: 'female',
+			change: 'abs',
+			suffixes: ['%', 'pp'],
+			formats: [formats.dp1, formats.dp1plus]
+		},
+		{
+			label: 'Male',
+			value: 'perc',
+			cell: 'male',
+			change: 'abs',
+			suffixes: ['%', 'pp'],
+			formats: [formats.dp1, formats.dp1plus]
 		}
 	];
 	
@@ -45,19 +115,23 @@
 	
 	// Data
 	let centroids;
-	let lookup = {
-		oa: null,
-		lsoa: null
-	};
+	let lookup;
 	let poplookup;
 	let places;
 	
 	// State
 	let selectedPlace = null;
-	let selected = [];
+	let selected = new Set();
+	let codes = {
+		"2001": [],
+		"2011": []
+	};
+	let pop = {
+		"2001": 0,
+		"2011": 0
+	}
 	let geoname = null;
 	let profile = null;
-	let population = 0;
 	let hovered = null;
 	let mapZoom = null;
 	let loaded = false;
@@ -65,6 +139,7 @@
 	let drawing = false;
 	let polygons = 0;
 	let footerHeight = 0;
+	let year = "2011";
 	
 	function doSelect(e) {
 		let code = e.detail.value;
@@ -85,7 +160,8 @@
 				// Select OAs within boundary
 				inPolygon(centroids, boundary)
 				.then(points => {
-					selected = points.features.map(d => d.properties.id);
+					selected = new Set(points.features.map(d => d.properties));
+					updateCodes();
 					loaded = true;
 				});
 
@@ -96,8 +172,12 @@
 	}
 	
 	function clearData() {
-		selected = [];
-		population = 0;
+		selected = new Set();
+		codes['2001'] = [];
+		codes['2011'] = [];
+		pop['2001'] = 0;
+		pop['2011'] = 0;
+		year = '2011';
 	}
 
 	function drawEdit() {
@@ -114,66 +194,79 @@
 		polygons = 0;
 		draw.changeMode('simple_select');
 	}
-	
-	getPlaces().then(data => {
-		places = data;
-		if (centroids && lookup) {
-			loaded = true;
-		}
-	});
-	
-	getPoints(oalatlng).then(data => {
-		centroids = data.geometry;
-		lookup.oa = data.lookup;
-		poplookup = data.poplookup;
-		if (places) {
-			loaded = true;
-		}
-	});
 
-	getData(lsoalookup).then(data => {
-		lookup.lsoa = makeLookup(data);
-	});
-
-	function makeProfile() {
+	async function makeProfile() {
 		loaded = false;
 
-		let newcodes = compressCodes(selected, lookup.oa);
-		newcodes = compressCodes(newcodes, lookup.lsoa);
+		let newcodes = {};
 
-		let profilearray = [];
+		newcodes['2011'] = compressCodes(codes['2011'], lookup.c11.lsoa);
+		newcodes['2011'] = compressCodes(newcodes['2011'], lookup.c11.msoa);
 
-		apitables.forEach(table => {
-			let newdata = {};
+		newcodes['2001'] = compressCodes(codes['2001'], lookup.c01.lsoa);
+		newcodes['2001'] = compressCodes(newcodes['2001'], lookup.c01.msoa);
+
+		let indexed = {
+			'2001': {},
+			'2011': {}
+		};
+
+		// Get data for OA, LSOA, MSOA codes
+		for (let table of apitables) {
 			let cells = Object.keys(table.cells);
-			getData(apiurl + table.query + cells.join(',') + '&geography=' + newcodes.join(','))
-			.then(data => {
-				data.forEach(d => {
-					cells.forEach(cell => {
-						if(!newdata[cell]) {
-							newdata[cell] = +d[cell];
-						} else {
-							newdata[cell] += +d[cell];
-						}
-					});
-				});
+			let data = await getData(apiurl + table.query + cells.join(',') + '&geography=' + newcodes[table.year].join(','));
+			data.forEach(d => {
+				if (!indexed[table.year][d['GEOGRAPHY_CODE']]) {
+					indexed[table.year][d['GEOGRAPHY_CODE']] = {};
+				}
 				cells.forEach(cell => {
-					profilearray.push([
-						table.cells[cell],
-						newdata[cell]
-					]);
+					indexed[table.year][d['GEOGRAPHY_CODE']][table.cells[cell]] = d[cell];
 				});
-				profile = profilearray;
-				loaded = true;
 			});
+		}
+
+		let dataset = {
+			area: 0
+		};
+
+		// Aggregate data and do calcs
+		['2011', '2001'].forEach(year => {
+			let arr = [];
+			let codes = Object.keys(indexed[year]);
+			codes.forEach(code => arr.push(indexed[year][code]));
+			
+			let cells = Object.keys(arr[0]);
+			cells = cells.filter(cell => cell != 'pop');
+			cells.unshift('pop');
+			cells.forEach(cell => {
+				if (cell == 'area' && year == '2011') {
+					dataset.area = 0;
+				} else {
+					dataset[cell + '_' + year] = 0;
+				}
+			  arr.forEach(d => {
+					if (cell == 'age') {
+						dataset[cell + '_' + year] += (d.age * d.pop) / dataset['pop_' + year];
+					} else if (cell == 'area') {
+						dataset.area += d.area;
+					} else {
+						dataset[cell + '_' + year] += d[cell];
+					}
+				});
+			});
+
+			dataset['density_' + year] = dataset['pop_' + year] / dataset.area;
 		});
+
+		profile = dataset;
+		loaded = true;
 	}
 
 	function dwnLookup() {
 		// Convert selected OA codes to string
-		let string = 'oa11cd,lat,lng\n';
-		selected.forEach(d => {
-			string += `${d},${poplookup[d].lat},${poplookup[d].lng}\n`;
+		let string = `oa${year.slice(-2)}cd,lat,lng\n`;
+		codes[year].forEach(code => {
+			string += `${code},${poplookup[code].lat},${poplookup[code].lng}\n`;
 		});
 		
 		// Convert CSV string to data blob
@@ -193,8 +286,8 @@
 		// Merge output areas to create polygon
 		console.log('generating polygon...');
 		let features = map.querySourceFeatures('oa', {sourceLayer: vector.layer});
-		let filtered = features.filter(f => selected.includes(f.id));
-		let json = filtered.map(f => f.toJSON());
+		let filtered = features.filter(d => codes['2011'].includes(d.id));
+		let json = filtered.map(d => d.toJSON());
 		let polygon = union(...json);
 
 		// Offset polygon +/- to remove unwanted areas (clean up)
@@ -284,8 +377,8 @@
 				// Select OAs within boundary
 				inPolygon(centroids, boundary)
 				.then(points => {
-					console.log(points);
-					selected = points.features.map(d => d.properties.id);
+				  selected = new Set(points.features.map(d => d.properties));
+					updateCodes();
 					loaded = true;
 				});
 
@@ -307,7 +400,8 @@
 
 				// Read the file
 				let areas = csvParse(evt.target.result, autoType);
-				selected = areas.map(d => d.oa11cd);
+				let codes = areas.map(d => d.oa11cd);
+				selected = new Set(centroids.features.filter(d => codes.includes(d.properties.id)).map(d => d.properties));
 
 				let points = {
 					'type': 'FeatureCollection',
@@ -348,8 +442,231 @@
 			map.removeSource(id);
 		}
 	}
+
+	async function clickSelect(ev) {
+		let code = ev.detail.code;
+		let newcode = ev.detail.newcode;
+		let geometry = ev.detail.geometry;
+
+		let points = map.queryRenderedFeatures({layers: ['centroids01']});
+		points = {type: "FeatureCollection", features: points.map(d => ({
+			type: "Feature",
+			geometry: d.geometry,
+			properties: d.properties
+		}))};
+		points = await within(points, geometry);
+		points = points.features ? points.features.map(d => poplookup[d.properties.id]) : [];
+
+		let newPoints = new Set([poplookup[code], ...points]);
+
+		if (newcode) {
+			selected = setUnion(selected, newPoints);
+			updateCodes();
+		} else {
+			selected = setDiff(selected, newPoints);
+			updateCodes();
+		}
+	}
+
+	async function drawSelect(ev) {
+		let bounds = ev.detail.polygons;
+		let clear = ev.detail.clear;
+		
+		// Select OAs within boundary
+		if (centroids && !clear) {
+      let points = await within(centroids, bounds);
+      let newPoints = await points.features.map((d) => d.properties);
+			newPoints = new Set(newPoints);
+      selected = setUnion(selected, newPoints);
+			updateCodes();
+    }
+	}
+
+	function updateCodes() {
+		let arr = Array.from(selected);
+		let c01 = arr.filter(d => d.c01 == true);
+		let c11 = arr.filter(d => d.c11 == true);
+		codes['2001'] = c01.map(d => d.id);
+		codes['2011'] = c11.map(d => d.id);
+		pop['2001'] = c01.map(d => d.pop01).reduce((a, b) => a + b, 0);
+		pop['2011'] = c11.map(d => d.pop11).reduce((a, b) => a + b, 0);
+	}
 	
+  // RUN THE CODE
+	getPlaces()
+	.then(data => {
+		places = data;
+		if (centroids && lookup && poplookup) {
+			loaded = true;
+		}
+	});
+	
+	getPoints(oalatlngurl)
+	.then(data => {
+		centroids = data.geometry;
+		poplookup = data.lookup;
+		if (places && lookup) {
+			loaded = true;
+		}
+	});
+
+	makeLookup(lookupurl)
+	.then(data => {
+		lookup = data;
+		if (places && centroids && poplookup) {
+			loaded = true;
+		}
+	});
 </script>
+
+<Panel>
+<div class="container" style="padding-bottom: {footerHeight + 20}px">
+	<h1>Draw your own geography</h1>
+	{#if mapZoom && mapZoom < 8 }
+	<div class="infobox">
+		<img src="./img/icon-zoom.svg" alt="zoom" class="inline-icon" on:click={() => map.flyTo({zoom: 9})} />
+		<strong>Zoom in to draw an area, select output areas</strong>, or choose a pre-defined geography below.
+	</div>
+	{:else if mapZoom}
+	<p>
+		{#if !drawing}
+		<button on:click={drawEdit} class="icon-pen">Draw an area</button>
+		{:else}
+		<button on:click={drawEdit} class="icon-stop">Stop drawing</button>
+		{/if}
+		{#if polygons > 0}<button on:click={drawDelete} class="icon-cancel">Clear drawn areas</button>{/if}
+		<small class="muted"><br/>You can also click areas on the map to select or deselect.</small>
+	</p>
+	{/if}
+	{#if selected.size > 0}
+	<h3>
+		Population {pop['2011'].toLocaleString()} 
+		<small class="muted">in 2011 ({pop['2011'] - pop['2001'] > 0 ? '+' : ''}{(((pop['2011'] / pop['2001']) - 1) * 100).toFixed(1)}% since 2001)</small>
+	</h3>
+	{/if}
+	{#if profile}
+	<button on:click={makeProfile} class="icon-refresh">Update profile</button>
+	<button on:click={() => {profile = null}} class="icon-cancel">Clear profile</button>
+	{:else if selected.size > 0}
+	<button on:click={makeProfile} class="icon-people">Make profile</button>
+	{/if}
+	{#if profile}
+	<Profile data={profile} rows={profilerows}/>
+	{/if}
+	{#if selected.size > 0}
+	<h3>
+		{codes[year].length.toLocaleString()} output areas selected
+		<small>
+		<select bind:value={year}>
+			<option value="2011">2011 census</option>
+			<option value="2001">2001 census</option>
+		</select>
+	  </small>
+	</h3>
+	<button on:click={clearData} class="icon-cancel">Clear output areas</button>
+	<textarea readonly>{codes[year].join(', ')}</textarea>
+	<input type="text" bind:value={geoname} placeholder="Name your geography..." />
+	<button on:click={dwnLookup} class="icon-download">Get lookup</button>
+	<button on:click={dwnBoundary} class="icon-download">Get boundary</button>
+	{#if selected.size > 500}
+	<small class="alert"><br/>Warning: Using 'get boundary' function for 500+ output areas may take a long time or cause the browser to stall.</small>
+	{/if}
+	{/if}
+
+	<div class="bottom" bind:clientHeight={footerHeight}>
+	{#if places}
+	<Select options={places} bind:selected={selectedPlace} search={true} placeholder="Find a named area..." on:select={doSelect} />
+	{:else}
+	<Loader small={true}/>
+	{/if}
+	<p>
+		<input type="file" accept=".csv" style="display:none" bind:this={uploadElem.lookup} on:change={() => {loaded = false; gotLookup()}}>
+		<input type="file" accept=".geojson,.json" style="display:none" bind:this={uploadElem.boundary} on:change={() => {loaded = false; gotBoundary()}}>
+		<button on:click={clickLookup} class="icon-upload">Upload lookup</button>
+		{#if boundary}
+		<button on:click={clearBounds} class="icon-cancel">Clear boundary</button>
+		{:else}
+		<button on:click={clickBoundary} class="icon-upload">Upload boundary</button>
+		{/if}
+		<small class="muted"><br/>Lookups must be for 2011 output areas. Boundaries must be GeoJSON format.</small>
+	</p>
+	</div>
+</div>
+</Panel>
+
+{#if !loaded}
+<Loader height="100vh" width="100vw" position="fixed" bgcolor="rgba(255, 255, 255, 0.7)"/>
+{/if}
+<Map bind:map={map} style={mapstyle} minzoom={4} maxzoom={14} bind:zoom={mapZoom}>
+	<MapSource id="oa" type="vector" url={vector.url} layer={vector.layer} promoteId={vector.id} minzoom={8} >
+		{#if poplookup}
+		<MapLayer
+		  id="oa_fill"
+			source="oa"
+			sourceLayer={vector.layer}
+			type="fill"
+			click={true}
+			hover={true}
+			selected={codes['2011']}
+			bind:drawing={drawing}
+			on:click={clickSelect}
+			{hovered}
+			paint="{{
+			'fill-color': ['case',
+				['==', ['feature-state','selected'], true], 'rgba(0, 0, 0, 0.2)',
+				'rgba(0, 0, 0, 0)'
+			],
+		}}" order="boundary_state" />
+		{/if}
+		<MapLayer id="oa_boundary" source="oa" sourceLayer={vector.layer} type="line" paint="{{
+			'line-color': ['case',
+				['==', ['feature-state','hovered'], true], 'rgb(0, 0, 0)',
+				'rgb(128, 128, 128)'
+			],
+			'line-width': ['case',
+				['==', ['feature-state','hovered'], true], 1,
+				0.25
+			],
+		}}" order="boundary_country" />
+	</MapSource>
+	{#if centroids}
+	<MapDraw on:draw={drawSelect} bind:draw={draw} bind:polygons={polygons} bind:drawing={drawing} bind:loaded={loaded} {centroids}/>
+	{/if}
+	{#if centroids}
+	<MapSource id="centroids" type="geojson" data={centroids} promoteId="id">
+		<MapLayer
+		  id="centroids11"
+			source="centroids"
+			type="circle"
+			filter={["==", "c11", true]}
+			paint="{{
+			'circle-color':  'rgba(0,0,0,0.5)',
+			'circle-radius': [
+				"interpolate", ["linear"], ["zoom"],
+				9, 0.3, 14, 2
+			]
+		}}" minzoom={8} />
+		<MapLayer
+		  id="centroids01"
+			source="centroids"
+			type="circle"
+			filter={[
+				"all",
+				["==", "c01", true],
+				["==", "c11", false]
+			]}
+			paint="{{
+			'circle-color':  'rgba(255,0,0,0.5)',
+			'circle-radius': [
+				"interpolate", ["linear"], ["zoom"],
+				9, 0.3, 14, 2
+			]
+		}}" minzoom={8} />
+	</MapSource>
+	{/if}
+</Map>
+
+
 
 <style>
 	:global(body) {
@@ -372,16 +689,6 @@
 		resize: vertical;
 		font-size: 0.8rem;
 		color: #555;
-	}
-	table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-	tr + tr {
-		border-top: 1px solid #999;
-	}
-	td {
-		padding: 0.3rem 0;
 	}
 	button {
 		padding-left: 28px;
@@ -436,11 +743,8 @@
 		position: absolute;
 		bottom: 0;
 	}
-	.right {
-		text-align: right;
-	}
 	.muted {
-		color: #999;
+		color: #777;
 	}
 	.alert {
 		color: red;
@@ -449,128 +753,3 @@
 		padding: 10px 0;
 	}
 </style>
-
-<Panel>
-<div class="container" style="padding-bottom: {footerHeight + 20}px">
-	<h1>Draw your own geography</h1>
-	{#if mapZoom && mapZoom < 8 }
-	<div class="infobox">
-		<img src="./img/icon-zoom.svg" alt="zoom" class="inline-icon" on:click={() => map.flyTo({zoom: 9})} />
-		<strong>Zoom in to draw an area, select output areas</strong>, or choose a pre-defined geography below.
-	</div>
-	{:else if mapZoom}
-	<p>
-		{#if !drawing}
-		<button on:click={drawEdit} class="icon-pen">Draw an area</button>
-		{:else}
-		<button on:click={drawEdit} class="icon-stop">Stop drawing</button>
-		{/if}
-		{#if polygons > 0}<button on:click={drawDelete} class="icon-cancel">Clear drawn areas</button>{/if}
-		<small class="muted"><br/>You can also click areas on the map to select or deselect.</small>
-	</p>
-	{/if}
-	{#if selected.length > 0}
-	<h3>
-		Population {population.toLocaleString()} 
-		<small class="muted">(2011 Census)</small>
-	</h3>
-	{/if}
-	{#if profile}
-	<button on:click={makeProfile} class="icon-refresh">Update profile</button>
-	<button on:click={() => {profile = null}} class="icon-cancel">Clear profile</button>
-	{:else if selected.length > 0}
-	<button on:click={makeProfile} class="icon-people">Make profile</button>
-	{/if}
-	{#if profile}
-	<h3>
-		Profile
-		<small class="muted">(2011 Census)</small>
-	</h3>
-	<table>
-		<tbody>
-			{#each profile as row}
-			<tr>
-				<td>{row[0]}</td>
-				<td class="right">{row[1].toLocaleString()}</td>
-			</tr>
-			{/each}
-			<tr>
-				<td>Density (number of persons per hectare)</td>
-				<td class="right">{(profile[0][1] / profile[5][1]).toFixed(2)}</td>
-			</tr>
-		</tbody>
-	</table>
-	{/if}
-	{#if selected.length > 0}
-	<h3>{selected.length.toLocaleString()} output areas selected</h3>
-	<button on:click={clearData} class="icon-cancel">Clear output areas</button>
-	<textarea readonly>{selected.join(',')}</textarea>
-	<input type="text" bind:value={geoname} placeholder="Name your geography..." />
-	<button on:click={dwnLookup} class="icon-download">Get lookup</button>
-	<button on:click={dwnBoundary} class="icon-download">Get boundary</button>
-	{#if selected.length > 500}
-	<small class="alert"><br/>Warning: Using 'get boundary' function for 500+ output areas may take a long time or cause the browser to stall.</small>
-	{/if}
-	{/if}
-
-	<div class="bottom" bind:clientHeight={footerHeight}>
-	{#if places}
-	<Select options={places} bind:selected={selectedPlace} search={true} placeholder="Find a named area..." on:select={doSelect} />
-	{:else}
-	<Loader small={true}/>
-	{/if}
-	<p>
-		<input type="file" accept=".csv" style="display:none" bind:this={uploadElem.lookup} on:change={() => {loaded = false; gotLookup()}}>
-		<input type="file" accept=".geojson,.json" style="display:none" bind:this={uploadElem.boundary} on:change={() => {loaded = false; gotBoundary()}}>
-		<button on:click={clickLookup} class="icon-upload">Upload lookup</button>
-		{#if boundary}
-		<button on:click={clearBounds} class="icon-cancel">Clear boundary</button>
-		{:else}
-		<button on:click={clickBoundary} class="icon-upload">Upload boundary</button>
-		{/if}
-		<small class="muted"><br/>Lookups must be as downloaded from this tool. Boundaries must be GeoJSON format.</small>
-	</p>
-	</div>
-</div>
-</Panel>
-
-{#if !loaded}
-<Loader height="100vh" width="100vw" position="fixed" bgcolor="rgba(255, 255, 255, 0.7)"/>
-{/if}
-<Map bind:map={map} style={mapstyle} minzoom={4} maxzoom={14} bind:zoom={mapZoom}>
-	<MapSource id="oa" type="vector" url={vector.url} layer={vector.layer} promoteId={vector.id} minzoom={8} >
-		{#if poplookup}
-		<MapLayer id="oa_fill" source="oa" sourceLayer={vector.layer} type="fill" click={true} hover={true} bind:selected={selected} lookup={poplookup} bind:population={population} bind:drawing={drawing} {hovered} paint="{{
-			'fill-color': ['case',
-				['==', ['feature-state','selected'], true], 'rgba(0, 0, 0, 0.2)',
-				'rgba(0, 0, 0, 0)'
-			],
-		}}" order="boundary_state" />
-		{/if}
-		<MapLayer id="oa_boundary" source="oa" sourceLayer={vector.layer} type="line" paint="{{
-			'line-color': ['case',
-				['==', ['feature-state','hovered'], true], 'rgb(0, 0, 0)',
-				'rgb(128, 128, 128)'
-			],
-			'line-width': ['case',
-				['==', ['feature-state','hovered'], true], 1,
-				0.25
-			],
-		}}" order="boundary_country" />
-	</MapSource>
-	{#if centroids}
-	<MapDraw bind:draw={draw} bind:polygons={polygons} bind:drawing={drawing} bind:selected={selected} bind:loaded={loaded} {centroids}/>
-	{/if}
-	{#if centroids}
-	<!-- Optional section of code to display OA centroids -->
-	<MapSource id="centroids" type="geojson" data={centroids} promoteId="id">
-		<MapLayer id="centroids" source="centroids" type="circle" paint="{{
-			'circle-color':  'rgb(168, 168, 168)',
-			'circle-radius': [
-				"interpolate", ["linear"], ["zoom"],
-				9, 0.5, 14, 2
-			]
-		}}" minzoom={8} />
-	</MapSource>
-	{/if}
-</Map>

@@ -32,7 +32,7 @@
 			year: '2011'
 		},
 		{
-			query: 'NM_145_1.data.csv?date=latest&rural_urban=0&cell=17&measures=20100&select=geography_code,cell,obs_value&rows=geography_code&cols=cell&cell=',
+			query: 'NM_145_1.data.csv?date=latest&rural_urban=0&measures=20100&select=geography_code,cell,obs_value&rows=geography_code&cols=cell&cell=',
 			cells: {
 				'0': 'pop',
 				'17': 'age'

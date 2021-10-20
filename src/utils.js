@@ -150,12 +150,14 @@ export async function makeLookup(url) {
 		lookup[year] = {};
 
 		codes.forEach(code => {
-			lookup[year][code] = {};
+			lookup[year][code] = {
+				forward: {},
+				reverse: {}
+			};
 
 			let keys = Object.keys(data[year][code]);
 			keys.forEach(key => {
-				lookup[year][code].reverse = data[year][code][key];
-				lookup[year][code].forward = {};
+				lookup[year][code].reverse[key] = data[year][code][key];
 				
 				data[year][code][key].forEach(val => {
 					lookup[year][code].forward[val] = key;
@@ -163,6 +165,8 @@ export async function makeLookup(url) {
 			});
 		});
 	});
+
+	console.log(lookup);
 
 	return lookup;
 }
@@ -240,7 +244,7 @@ export function urlCodes(codes) {
 		}
 	}
 	
-	return newcodes;
+	return newcodes[0] ? newcodes : codes;
 }
 
 // Write blob string to file

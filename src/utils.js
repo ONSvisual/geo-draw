@@ -166,8 +166,6 @@ export async function makeLookup(url) {
 		});
 	});
 
-	console.log(lookup);
-
 	return lookup;
 }
 

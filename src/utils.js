@@ -1,5 +1,5 @@
 import { csvParse, autoType } from 'd3-dsv';
-import { bbox, simplify, pointsWithinPolygon } from '@turf/turf';
+import { bbox, bboxPolygon, simplify, pointsWithinPolygon } from '@turf/turf';
 import wellknown from 'wellknown';
 
 // API URL for ONS linked geographic data service
@@ -67,16 +67,7 @@ LIMIT 1`;
 
 	// Convert polygon from WKT to geojson format
 	let geojson = await wellknown.parse(data[0].geometry);
-	console.log('polygon loaded')
-
-	// Simplify the polygon if it's a large BUA or BUASD
-	let type = code.substring(0, 3);
-	if (type == 'E34' || type == 'E35' || type == 'W37' || type == 'W38' || type == 'K05' || type == 'K06') {
-		if (JSON.stringify(geojson).length > 20000) {
-			console.log('trying to simplify polygon')
-			geojson = simplify(geojson, { tolerance: 0.001, highQuality: true, mutate: true });
-		}
-	}
+	console.log('polygon loaded');
 
 	// Get the lon/lat bounding box of the polygon
 	let bounds = await bbox(geojson);
@@ -171,7 +162,22 @@ export async function makeLookup(url) {
 
 // Async function to allow pointsWithinPolygon function to be chaiend with .then syntax
 export async function inPolygon(centroids, boundary) {
-	let points = await pointsWithinPolygon(centroids, boundary);
+	// Simplify the boundary if it's very complex
+	if (JSON.stringify(boundary).length > 250000) {
+		console.log("polygon string length is " + JSON.stringify(boundary).length);
+		console.log("too complex. trying to simplify...")
+		boundary = simplify(boundary, { tolerance: 0.001, highQuality: true, mutate: true });
+		console.log("new polygon string length is " + JSON.stringify(boundary).length);
+	}
+
+	// Get the centroids within the approximate area (bounding box)
+	let box = bbox(boundary);
+	let boxpoly = bboxPolygon(box);
+	let newcentroids = pointsWithinPolygon(centroids, boxpoly);
+	console.log(newcentroids.features.length + " centroids in bbox")
+
+	// Get centroids within the precise boundary
+	let points = pointsWithinPolygon(newcentroids, boundary);
 	return points;
 }
 
@@ -222,6 +228,7 @@ export function compressCodes(codes, lookup) {
 }
 
 // Compress API geography string for Nomis by combining consecutive codes with elipsis (...)
+// NOTE: This code doesn't work for GSS geography codes. Must use Nomis numerical codes
 export function urlCodes(codes) {
 	let srtcodes = [...codes].sort((a, b) => a.localeCompare(b));
 	let nums = srtcodes.map(code => +code.slice(-8));

@@ -211,10 +211,12 @@
 
 		newcodes['2001'] = compressCodes(codes['2001'], lookup.c01.lsoa);
 		newcodes['2001'] = compressCodes(newcodes['2001'], lookup.c01.msoa);
+		console.log(codes['2001'].length + ' OA 2001 codes compressed to ' + newcodes['2001'].length + ' MSOA/LSOA/OA codes');
+		console.log(codes['2011'].length + ' OA 2011 codes compressed to ' + newcodes['2011'].length + ' MSOA/LSOA/OA codes');
 
 		// Compress code list for Nomis API query
-		newcodes['2011'] = urlCodes(newcodes['2011']);
-		newcodes['2001'] = urlCodes(newcodes['2001']);
+		// newcodes['2011'] = urlCodes(newcodes['2011']);
+		// newcodes['2001'] = urlCodes(newcodes['2001']);
 
 		// Get data for OA, LSOA, MSOA codes
 		let indexed = {
